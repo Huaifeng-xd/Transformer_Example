@@ -84,7 +84,7 @@ class PatchEmbed(nn.Module):
         return x
 
 class EmbedLayer(nn.Module):
-    def __init__(self, img_size=192, patch_size=16, in_c=4, embed_dim=1024, norm_layer=None):
+    def __init__(self, img_size, patch_size, in_c, embed_dim, norm_layer=None):
         super().__init__()
         patch_num = img_size // patch_size
         self.patch_embed = PatchEmbed(img_size, patch_size, in_c, embed_dim)
@@ -131,10 +131,11 @@ class EncoderLayer(nn.Module):
     def forward(self, x, src_mask):
         # Self-attention
         residual = x
-        x = self.layer_norm1(x + self.dropout(self.self_attention(x, x, x, src_mask)))
+        x = self.layer_norm1(residual + self.dropout(self.self_attention(x, x, x, src_mask)))
 
+        residual = x
         # Feed-forward network
-        x = self.layer_norm2(x + self.dropout(self.feed_forward(x)))
+        x = self.layer_norm2(residual + self.dropout(self.feed_forward(x)))
 
         return x
 
