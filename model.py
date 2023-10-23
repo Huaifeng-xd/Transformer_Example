@@ -1,7 +1,7 @@
 import torch
 
 from mask import mask_pad, mask_tril
-from util import MultiHead, PositionEmbedding, FullyConnectedOutput
+# from util import MultiHead, PositionEmbedding, FullyConnectedOutput
 from util import *
 from functools import partial
 
