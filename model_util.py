@@ -94,13 +94,34 @@ class EmbedLayer(nn.Module):
         pae = self.patch_embed(x)
         embed_out = self.position_embed(pae)
         return embed_out
+class FeedForwardLayer(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+        self.norm = nn.LayerNorm(out_features)
+
+    def forward(self, x):
+        origin = x.clone()
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        x = origin + self.norm(x)
+        return x
+
 
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, dropout=0.1):
         super(EncoderLayer, self).__init__()
 
         self.self_attention = MultiHeadAttention(d_model, num_heads)
-        self.feed_forward = PositionwiseFeedForward(d_model)
+        self.feed_forward = FeedForwardLayer(d_model)
 
         self.layer_norm1 = nn.LayerNorm(d_model)
         self.layer_norm2 = nn.LayerNorm(d_model)
@@ -131,7 +152,7 @@ class DecoderLayer(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, enc_outputs, src_mask, tgt_mask):
+    def forward(self, x, enc_outputs, src_mask, tgt_mask='mask'):
         # Self-attention
         residual = x
         x = self.layer_norm1(x + self.dropout(self.self_attention(x, x, x, tgt_mask)))
