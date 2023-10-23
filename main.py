@@ -4,7 +4,6 @@ from data import zidian_y, loader, zidian_xr, zidian_yr
 from mask import mask_pad, mask_tril
 from model import Transformer
 
-
 # 预测函数
 def predict(x):
     # x = [1, 50]

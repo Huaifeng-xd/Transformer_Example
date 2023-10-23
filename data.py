@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 
+# 数据集每调用get_data，生成x 与 y，就是生成一个句子和句子的翻译结果。
 def get_data():
     # 定义词集合
     words = [
@@ -60,7 +61,7 @@ def get_data():
     x = x[:50]
     y = y[:51]
 
-    # 编码成数据
+    # 编码成数据，编码成数字
     x = [zidian_x[i] for i in x]
     y = [zidian_y[i] for i in y]
 

@@ -1,7 +1,9 @@
 import math
-
 import torch
+import torch.nn as nn
 
+from model import DropPath
+import numpy as np
 
 # 注意力计算函数
 def attention(Q, K, V, mask):
@@ -16,7 +18,7 @@ def attention(Q, K, V, mask):
     score /= 8 ** 0.5
 
     # mask遮盖,mask是true的地方都被替换成-inf,这样在计算softmax的时候,-inf会被压缩到0
-    # mask = [b, 1, 50, 50]
+    # mask = [b, 1, 50, 50] masked_filled_是库里的函数
     score = score.masked_fill_(mask, -float('inf'))
     score = torch.softmax(score, dim=-1)
 
@@ -30,9 +32,60 @@ def attention(Q, K, V, mask):
 
     return score
 
+class Attention(nn.Module):
+    def __init__(self,
+                 dim,   # 输入token的dim
+                 num_heads=8,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 attn_drop_ratio=0.,
+                 proj_drop_ratio=0.):
+        super(Attention, self).__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop_ratio)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop_ratio)
+    #todo:加上掩码处理
+    def generate_mask(self,dim):
+        # 此处是 sequence mask ，防止 decoder窥视后面时间步的信息。
+        # padding mask 在数据输入模型之前完成。
+        matirx = np.ones((dim,dim))
+        mask = torch.Tensor(np.tril(matirx))
 
+        return mask==1
+    def forward(self, x, require_mask=False):
+        # [batch_size, num_patches + 1, total_embed_dim]
+        B, N, C = x.shape
+
+        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
+        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+
+        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        if require_mask:
+            mask = self.generate_mask(N)
+            # masked_fill 函数中，对Mask位置为True的部分进行Mask
+            attn.masked_fill(mask, value=float("-inf"))  # 注意这里的小Trick，不需要将Q,K,V 分别MASK,只MASKSoftmax之前的结果就好了
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
 # 多头注意力计算层
-class MultiHead(torch.nn.Module):
+class MultiHead(nn.Module):
     def __init__(self):
         super().__init__()
         self.fc_Q = torch.nn.Linear(32, 32)
@@ -113,10 +166,12 @@ class MultiHead(torch.nn.Module):
         score = clone_Q + score
         return score
 
-
 # 位置编码层
-class PositionEmbedding(torch.nn.Module):
-    def __init__(self):
+class PositionEmbedding(nn.Module):
+    """
+    patch + position embedding
+    """
+    def __init__(self, patch_nums, embedding_dim, num_embedding=1024*1024,):
         super().__init__()
 
         # pos是第几个词,i是第几个维度,d_model是维度总数
@@ -129,33 +184,30 @@ class PositionEmbedding(torch.nn.Module):
             return math.cos(pe)
 
         # 初始化位置编码矩阵
-        pe = torch.empty(50, 32)
-        for i in range(50):
-            for j in range(32):
-                pe[i, j] = get_pe(i, j, 32)
+        pe = torch.empty(patch_nums, embedding_dim)
+        for i in range(patch_nums):
+            for j in range(embedding_dim):
+                pe[i, j] = get_pe(i, j, embedding_dim)
         pe = pe.unsqueeze(0)
 
         # 定义为不更新的常量
         self.register_buffer('pe', pe)
 
-        # 词编码层
-        self.embed = torch.nn.Embedding(39, 32)
-        # 初始化参数
-        self.embed.weight.data.normal_(0, 0.1)
+        # # 词编码层 前面一个参数表示词一共有39种，后面是编码的维度
+        # self.embed = patch_embedding
 
     def forward(self, x):
         # [8, 50] -> [8, 50, 32]
-        embed = self.embed(x)
-
+        # embed = self.embed
+        patch_embed = x
         # 词编码和位置编码相加
         # [8, 50, 32] + [1, 50, 32] -> [8, 50, 32]
-        embed = embed + self.pe
+        embed = patch_embed + self.pe
         return embed
 
-
 # 全连接输出层
-class FullyConnectedOutput(torch.nn.Module):
-    def __init__(self):
+class FullyConnectedOutput(nn.Module):
+    def __init__(self,in_features,out_features):
         super().__init__()
         self.fc = torch.nn.Sequential(
             torch.nn.Linear(in_features=32, out_features=64),
@@ -182,3 +234,175 @@ class FullyConnectedOutput(torch.nn.Module):
         out = clone_x + out
 
         return out
+
+class PatchEmbed(nn.Module):
+    """
+    2D Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=16, in_c=3, embed_dim=768, norm_layer=None):
+        super().__init__()
+        img_size = (img_size, img_size)
+        patch_size = (patch_size, patch_size)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+
+        self.proj = nn.Conv2d(in_c, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        assert H == self.img_size[0] and W == self.img_size[1], \
+            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+
+        # flatten: [B, C, H, W] -> [B, C, HW]
+        # transpose: [B, C, HW] -> [B, HW, C]
+        # 这里的HW就是经过卷积后留下的patchsize，c就是embedding dim
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = self.norm(x)
+        return x
+
+class EmbedLayer(nn.Module):
+    def __init__(self,img_size=192, patch_size=16, in_c=4, embed_dim=1024, norm_layer=None):
+        super().__init__()
+        self.patch_embed = PatchEmbed(img_size, patch_size, in_c, embed_dim)
+        self.position_embed = PositionEmbedding(self.patch_embed)
+
+    def forward(self, x):
+        pae = self.patch_embed(x)
+        embed_out = self.position_embed(pae)
+        return embed_out
+
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    """
+    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
+    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
+    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
+    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
+    'survival rate' as the argument.
+    """
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+# class Mlp(nn.Module):
+#     """
+#     MLP as used in Vision Transformer, MLP-Mixer and related networks
+#     """
+#     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+#         super().__init__()
+#         out_features = out_features or in_features
+#         hidden_features = hidden_features or in_features
+#         self.fc1 = nn.Linear(in_features, hidden_features)
+#         self.act = act_layer()
+#         self.fc2 = nn.Linear(hidden_features, out_features)
+#         self.drop = nn.Dropout(drop)
+#         self.norm = nn.LayerNorm(out_features)
+#
+#     def forward(self, x):
+#         origin = x
+#         x = self.fc1(x)
+#         x = self.act(x)
+#         x = self.drop(x)
+#         x = self.fc2(x)
+#         x = self.drop(x)
+#         x = origin + self.norm(x)
+#         return x
+
+class EncoderBlock(nn.Module):
+    """
+    可直接调用无需添加其余模块的encoder block
+    """
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm):
+        super(EncoderBlock, self).__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = FeedForwardLayer(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop_ratio)
+
+    def forward(self, x):
+        x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+class HoloGen(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.mlp1 = FeedForwardLayer(1024, 2048, 4096)
+        self.mlp2 = FeedForwardLayer(4096, 2048, 1024)
+
+    def forward(self, x):
+        # B, N, dim = x.shape
+        x = self.mlp(x)
+        res = self.mlp(x)
+        return res
+
+class DecoderLayer:
+    def __init__(self):
+        super().__init__()
+
+        self.mh1 = Attention()
+        self.mh2 = Attention()
+
+        self.fc = FeedForwardLayer()
+
+    def forward(self, x, y, require_mask = False):
+        def generate_mask(self, dim):
+            # 此处是 sequence mask ，防止 decoder窥视后面时间步的信息。
+            # padding mask 在数据输入模型之前完成。
+            matirx = np.ones((dim, dim))
+            mask = torch.Tensor(np.tril(matirx))
+        # 先计算y的自注意力,维度不变
+        # [b, 50, 32] -> [b, 50, 32]
+        y = self.mh1(y, y, y, require_mask=True)
+
+        # 结合x和y的注意力计算,维度不变
+        # [b, 50, 32],[b, 50, 32] -> [b, 50, 32]
+        y = self.mh2(y, x, x, require_mask=True)
+
+        # 全连接输出,维度不变
+        # [b, 50, 32] -> [b, 50, 32]
+        y = self.fc(y)
+
+        return y
+class FeedForwardLayer(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+        self.norm = nn.LayerNorm(out_features)
+
+    def forward(self, x):
+        origin = x.clone()
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        x = origin + self.norm(x)
+        return x

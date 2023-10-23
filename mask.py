@@ -4,6 +4,9 @@ from data import zidian_x, zidian_y
 
 
 def mask_pad(data):
+    """
+    对注意力矩阵也就是，Q*KT结果矩阵
+    """
     # b句话,每句话50个词,这里是还没embed的
     # data = [b, 50]
     # 判断每个词是不是<PAD>
@@ -17,7 +20,7 @@ def mask_pad(data):
     # 但是pad本身对其他词的注意力并不是0
     # 所以是pad的行不是true
 
-    # 复制n次
+    # 复制n次：让列是padding的词向下复制都是True。这样待会True的部分经过处理与 softmax会为0
     # [b, 1, 1, 50] -> [b, 1, 50, 50]
     mask = mask.expand(-1, 1, 50, 50)
 
