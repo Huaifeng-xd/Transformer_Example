@@ -3,6 +3,7 @@ import torch
 from MyDataset import MyDataset
 from model_util import *
 from matplotlib import pyplot as plt
+from tensorboardX import SummaryWriter
 class Transformer(torch.nn.Module):
     # 由于希望输出的是6通道的，所以尝试embed_dim=16*16*6=1536
     def __init__(self,num_heads=8, num_layers=6,embed_dim=1536,img_size=192, patch_size=16):
@@ -106,12 +107,12 @@ if __name__ == '__main__':
 
     # 设置训练参数
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_epochs = 1000
+    num_epochs = 20
     batch_size = 32
-    learning_rate = 0.001
+    learning_rate = 0.01
 
     # 创建数据集
-    dataset = MyDataset(root_dir=r'D:\HoloDoc\data_mit_4k\test_192')
+    dataset = MyDataset(root_dir=r'E:\BaiduNetdiskDownload\data\test_192\test_192')
 
     # 创建数据加载器
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -125,7 +126,16 @@ if __name__ == '__main__':
 
     # 训练模型
     total_step = len(dataloader)
+
+    # 模拟训练循环
+    num_epochs = 10
+    num_iterations = 100
+    log_dir = "HOLO_tensorboard"
+    writer = SummaryWriter(log_dir)
+
+    # 模拟训练过程并实时更新损失曲线
     for epoch in range(num_epochs):
+        print(f"now epoch{epoch}")
         for i, (rgb_depth, amp_phs) in enumerate(dataloader):
             # 将数据移动到设备上
             rgb_depth = rgb_depth.to(device)
@@ -142,9 +152,39 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
 
-            # 打印训练信息
-            if (i + 1) % 10 == 0:
-                print(f"Epoch [{epoch + 1}/{num_epochs}], Step [{i + 1}/{total_step}], Loss: {loss.item():.4f}")
+            # 实时记录损失值
+            global_step = epoch * len(batch_size) + i
+            writer.add_scalar('Loss', loss.item(), global_step)
+
+            # 打印进度
+            progress = epoch * len(dataloader) + i + 1
+            print(f"Progress: {progress}/{num_epochs * len(dataloader)}", end="\r")
+
+        # 关闭 SummaryWriter
+    writer.close()
+
+
+    # for epoch in range(num_epochs):
+    #     print(f"now epoch{epoch}")
+    #     for i, (rgb_depth, amp_phs) in enumerate(dataloader):
+    #         # 将数据移动到设备上
+    #         rgb_depth = rgb_depth.to(device)
+    #         amp_phs = amp_phs.to(device)
+    #
+    #         # 前向传播
+    #         outputs = model(rgb_depth, amp_phs)
+    #
+    #         # 计算损失
+    #         loss = criterion(outputs, amp_phs)
+    #
+    #         # 反向传播和优化
+    #         optimizer.zero_grad()
+    #         loss.backward()
+    #         optimizer.step()
+    #
+    #         # 打印训练信息
+    #         if (i + 1) % 10 == 0:
+    #             print(f"Epoch [{epoch + 1}/{num_epochs}], Step [{i + 1}/{total_step}], Loss: {loss.item():.4f}")
 
     # 保存模型
     torch.save(model.state_dict(), "model.pth")
