@@ -545,3 +545,36 @@ class FeedForwardLayer(nn.Module):
         x = self.drop(x)
         x = origin + self.norm(x)
         return x
+
+def plot_hologram(images):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # # 假设你有一个形状为 (32, 6, 192, 192) 的数组
+    # images = np.random.random((32, 6, 192, 192))
+
+    # 定义子图的行数和列数
+    num_rows = 8
+    num_cols = 4
+
+    # 创建一个新的图像窗口，并设置子图的布局
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(12, 24))
+
+    # 遍历每个子图位置，并在每个位置显示一个图像
+    for i in range(num_rows):
+        for j in range(num_cols):
+            index = i * num_cols + j  # 计算图像在数组中的索引
+            image = images[index]  # 获取当前索引对应的图像
+
+            # 由于图像是三通道的，需要将其转换为正确的图像格式
+            image = np.transpose(image, (1, 2, 0))
+
+            # 显示图像在当前子图位置
+            axes[i, j].imshow(image)
+            axes[i, j].axis('off')  # 禁用坐标轴
+
+    # 调整子图之间的间距
+    plt.tight_layout()
+
+    # 展示图像
+    plt.show()

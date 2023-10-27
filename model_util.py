@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import math
@@ -11,7 +12,7 @@ class MultiHeadAttention(nn.Module):
         self.query = nn.Linear(d_model, d_model)
         self.key = nn.Linear(d_model, d_model)
         self.value = nn.Linear(d_model, d_model)
-
+        self.dropout = nn.Dropout(0.1)
         self.fc = nn.Linear(d_model, d_model)
 
     def forward(self, query, key, value, mask=None):
@@ -37,7 +38,7 @@ class MultiHeadAttention(nn.Module):
         return x
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_seq_len):
+    def __init__(self, max_seq_len, d_model):
         super(PositionalEncoding, self).__init__()
 
         position_encoding = torch.zeros(max_seq_len, d_model)
@@ -59,7 +60,7 @@ class PatchEmbed(nn.Module):
     2D Image to Patch Embedding
     """
 
-    def __init__(self, img_size=192, patch_size=16, in_c=4, embed_dim=1024, norm_layer=None):
+    def __init__(self, img_size=192, patch_size=16, in_c=4, embed_dim=1536, norm_layer=None):
         super().__init__()
         img_size = (img_size, img_size)
         patch_size = (patch_size, patch_size)
@@ -78,7 +79,7 @@ class PatchEmbed(nn.Module):
 
         # flatten: [B, C, H, W] -> [B, C, HW]
         # transpose: [B, C, HW] -> [B, HW, C]
-        # 这里的HW就是经过卷积后留下的patchsize，c就是embedding dim
+        # 这里的HW就是经过卷积后留下的patchpixels，c就是embedding dim
         x = self.conv(x).flatten(2).transpose(1, 2)
         x = self.norm(x)
         return x
@@ -88,7 +89,7 @@ class EmbedLayer(nn.Module):
         super().__init__()
         patch_num = img_size // patch_size
         self.patch_embed = PatchEmbed(img_size, patch_size, in_c, embed_dim)
-        self.position_embed = PositionalEncoding(patch_num, self.patch_embed)
+        self.position_embed = PositionalEncoding(patch_num**2, embed_dim)
 
     def forward(self, x):
         pae = self.patch_embed(x)
@@ -153,10 +154,11 @@ class DecoderLayer(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, enc_outputs, src_mask, tgt_mask='mask'):
+    def forward(self, decoder_query, enc_outputs, src_mask, tgt_mask):
         # Self-attention
-        residual = x
-        x = self.layer_norm1(x + self.dropout(self.self_attention(x, x, x, tgt_mask)))
+        residual = decoder_query
+        x = self.layer_norm1(decoder_query +
+                             self.dropout(self.self_attention(decoder_query, decoder_query, decoder_query, tgt_mask)))
 
         # Encoder-decoder attention
         x = self.layer_norm2(x + self.dropout(self.enc_dec_attention(x, enc_outputs, enc_outputs, src_mask)))
@@ -193,3 +195,22 @@ class TransformerDecoder(nn.Module):
             x = decoder_layer(x, enc_outputs, src_mask, tgt_mask)
 
         return x
+
+
+# def get_attn_tgt_mask(batch_size, tgt_dim):
+#     attn_shape = [batch_size, tgt_dim, tgt_dim]
+#     mask = numpy.triu((numpy.ones(attn_shape), 1))
+#     mask = torch.from_numpy(mask).byte()
+#     return mask
+def get_attn_tgt_mask(attn_shape):
+    # attn_shape = [batch_input.size(0), batch_input.size(1), batch_input.size(1)]
+
+    # 然后使用np.ones方法向这个形状中添加1元素,形成上三角阵, 最后为了节约空间,
+    # 再使其中的数据类型变为无符号8位整形unit8
+    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+
+    # 最后将numpy类型转化为torch中的tensor, 内部做一个1 - 的操作,
+    # 在这个其实是做了一个三角阵的反转, subsequent_mask中的每个元素都会被1减,
+    # 如果是0, subsequent_mask中的该位置由0变成1
+    # 如果是1, subsequent_mask中的该位置由1变成0
+    return torch.from_numpy(1 - subsequent_mask)
