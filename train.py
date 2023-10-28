@@ -1,9 +1,13 @@
 import torch
-
+import torch.nn as nn
 from MyDataset import MyDataset
 from model_util import *
 from matplotlib import pyplot as plt
 from tensorboardX import SummaryWriter
+from torch.utils.data import DataLoader
+from torchvision.transforms import ToTensor
+
+
 class Transformer(torch.nn.Module):
     # 由于希望输出的是6通道的，所以尝试embed_dim=16*16*6=1536
     def __init__(self,num_heads=8, num_layers=6,embed_dim=1536,img_size=192, patch_size=16):
@@ -25,6 +29,7 @@ class Transformer(torch.nn.Module):
         # 编码层计算
         # [b, 50, 32] -> [b, 50, 32]
         encoder_output = self.encoder(x, None)
+
         mask_attn_rows = self.patch_num ** 2
         mask_attn_columns = mask_attn_rows
         batch_size = x.size(0)
@@ -32,15 +37,10 @@ class Transformer(torch.nn.Module):
         tgt_mask = get_attn_tgt_mask(attn_shape)
         expanded_tensor = tgt_mask.unsqueeze(1)
         tgt_mask = expanded_tensor.repeat(1, 8, 1, 1).cuda()
-        # 解码层计算
-        # [b, 50, 32],[b, 50, 32] -> [b, 50, 32]
+        # （batch_size,patch_sum,emb_dim）
         y = self.decoder(y, encoder_output, None, tgt_mask)
 
-        # 全连接输出,维度不变
-        # [b, 50, 32] -> [b, 50, 39]
 
-        #
-        # # 解码器前向传播
         B, PatchNum, PatchEmbeddings = y.shape
         # holo_output = self.res_decoder(encoded)
         hologram_patch = y.reshape(B, PatchNum, 6, int(math.sqrt(PatchEmbeddings // 6)), int(math.sqrt(PatchEmbeddings // 6)))
@@ -100,26 +100,31 @@ if __name__ == '__main__':
     #     plt.axis('off')
     #     plt.show()
 
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader
-    from torchvision.transforms import ToTensor
-
     # 设置训练参数
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = 20
     batch_size = 32
-    learning_rate = 0.01
+    learning_rate = 0.001
+
+
+    lab_train_192 = r"E:\BaiduNetdiskDownload\data\train_192\train_192"
 
     # 创建数据集
-    dataset = MyDataset(root_dir=r'E:\BaiduNetdiskDownload\data\test_192\test_192')
+    dataset = MyDataset(root_dir=lab_train_192)
 
     # 创建数据加载器
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # 创建 Transformer 模型实例
     model = Transformer().to(device)
+    rgb_d_init = torch.randn(32, 4, 192, 192).to(device)
+    hologram_init = torch.randn(32, 6, 192, 192).to(device)
 
+    log_dir = "runs/holo"
+    writer = SummaryWriter(log_dir)
+    writer.add_graph(model, [rgb_d_init, hologram_init])
+
+    # 模型图
     # 定义损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -130,8 +135,7 @@ if __name__ == '__main__':
     # 模拟训练循环
     num_epochs = 10
     num_iterations = 100
-    log_dir = "HOLO_tensorboard"
-    writer = SummaryWriter(log_dir)
+
 
     # 模拟训练过程并实时更新损失曲线
     for epoch in range(num_epochs):
@@ -153,12 +157,12 @@ if __name__ == '__main__':
             optimizer.step()
 
             # 实时记录损失值
-            global_step = epoch * len(batch_size) + i
+            global_step = epoch * batch_size + i
             writer.add_scalar('Loss', loss.item(), global_step)
 
             # 打印进度
-            progress = epoch * len(dataloader) + i + 1
-            print(f"Progress: {progress}/{num_epochs * len(dataloader)}", end="\r")
+            progress = epoch * batch_size + i + 1
+            print(f"Progress: {progress}/{num_epochs * 3800}", end="\r")
 
         # 关闭 SummaryWriter
     writer.close()
