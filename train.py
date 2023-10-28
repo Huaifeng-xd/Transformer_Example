@@ -33,11 +33,10 @@ class Transformer(torch.nn.Module):
         expanded_tensor = tgt_mask.unsqueeze(1)
         tgt_mask = expanded_tensor.repeat(1, 8, 1, 1).cuda()
         # 解码层计算
-        # [b, 50, 32],[b, 50, 32] -> [b, 50, 32]
+        # （bachsize,patch_sum,emb_dim）
         y = self.decoder(y, encoder_output, None, tgt_mask)
 
         # 全连接输出,维度不变
-        # [b, 50, 32] -> [b, 50, 39]
 
         #
         # # 解码器前向传播
@@ -109,10 +108,13 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_epochs = 20
     batch_size = 32
-    learning_rate = 0.01
+    learning_rate = 0.001
+
+
+    lab_train_192 = r"E:\BaiduNetdiskDownload\data\train_192\train_192"
 
     # 创建数据集
-    dataset = MyDataset(root_dir=r'E:\BaiduNetdiskDownload\data\test_192\test_192')
+    dataset = MyDataset(root_dir=lab_train_192)
 
     # 创建数据加载器
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -120,6 +122,7 @@ if __name__ == '__main__':
     # 创建 Transformer 模型实例
     model = Transformer().to(device)
 
+    # 模型图
     # 定义损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -132,6 +135,7 @@ if __name__ == '__main__':
     num_iterations = 100
     log_dir = "HOLO_tensorboard"
     writer = SummaryWriter(log_dir)
+
 
     # 模拟训练过程并实时更新损失曲线
     for epoch in range(num_epochs):
@@ -153,12 +157,12 @@ if __name__ == '__main__':
             optimizer.step()
 
             # 实时记录损失值
-            global_step = epoch * len(batch_size) + i
+            global_step = epoch * batch_size + i
             writer.add_scalar('Loss', loss.item(), global_step)
 
             # 打印进度
-            progress = epoch * len(dataloader) + i + 1
-            print(f"Progress: {progress}/{num_epochs * len(dataloader)}", end="\r")
+            progress = epoch * batch_size + i + 1
+            print(f"Progress: {progress}/{num_epochs * 3800}", end="\r")
 
         # 关闭 SummaryWriter
     writer.close()

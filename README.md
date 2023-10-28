@@ -1,3 +1,3 @@
-直接运行main.py即可观察运行结果.
-
-视频课程：https://www.bilibili.com/video/BV19Y411b7qx/
+1.train.py 训练模型
+2.model_util.py 定义模型结构
+3.MyDataset.py 定义本次mit-4k数据的取法
